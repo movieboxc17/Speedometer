@@ -59,13 +59,6 @@
             border-radius: 12px;
             max-width: 600px;
         }
-        .weather {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 10px;
-            border-radius: 8px;
-            margin: 20px auto;
-            max-width: 600px;
-        }
     </style>
 </head>
 <body>
@@ -97,10 +90,6 @@
             <div id="duration">00:00:00</div>
         </div>
     </div>
-    <div class="weather" id="weather">
-        Loading weather data...
-    </div>
-    <div id="map"></div>
     <button onclick="startTracking()">Start Tracking</button>
     <button onclick="pauseTracking()">Pause</button>
     <button onclick="stopTracking()">Stop</button>
@@ -118,8 +107,8 @@
         let trackPoints = [];
         let maxAltitude = 0;
         let minAltitude = Infinity;
+        let watchId = null;
 
-        // Enhanced tracking function with speed smoothing
         function startTracking() {
             if (!tracking) {
                 tracking = true;
@@ -127,18 +116,16 @@
                 updateTimer();
                 
                 if (navigator.geolocation) {
-                    navigator.geolocation.watchPosition(updatePosition, handleError, {
+                    watchId = navigator.geolocation.watchPosition(updatePosition, handleError, {
                         enableHighAccuracy: true,
                         maximumAge: 0,
                         timeout: 5000
                     });
                 }
-                getWeather();
                 keepScreenAwake();
             }
         }
 
-        // New function to keep screen awake
         function keepScreenAwake() {
             if (navigator.wakeLock) {
                 navigator.wakeLock.request('screen')
@@ -146,7 +133,6 @@
             }
         }
 
-        // Enhanced position update with smoothing
         function updatePosition(position) {
             const speed = position.coords.speed ? position.coords.speed * 3.6 : 0;
             const smoothedSpeed = smoothSpeed(speed);
@@ -154,23 +140,19 @@
             document.getElementById('speed').textContent = `${smoothedSpeed.toFixed(1)} km/h`;
             document.getElementById('altitude').textContent = `${position.coords.altitude.toFixed(0)} m`;
 
-            // Track points for route visualization
             trackPoints.push({
                 lat: position.coords.latitude,
                 lng: position.coords.longitude,
                 alt: position.coords.altitude
             });
 
-            // Update altitude stats
             updateAltitudeStats(position.coords.altitude);
 
-            // Update max speed
             if (smoothedSpeed > maxSpeed) {
                 maxSpeed = smoothedSpeed;
                 document.getElementById('maxSpeed').textContent = `${maxSpeed.toFixed(1)} km/h`;
             }
 
-            // Calculate distance and average speed
             if (lastPosition) {
                 const distance = calculateDistance(
                     lastPosition.coords.latitude,
@@ -186,17 +168,14 @@
             }
 
             lastPosition = position;
-            updateMap();
         }
 
-        // Speed smoothing function
         function smoothSpeed(currentSpeed) {
             speedReadings.push(currentSpeed);
             if (speedReadings.length > 5) speedReadings.shift();
             return speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length;
         }
 
-        // New function to update altitude statistics
         function updateAltitudeStats(altitude) {
             maxAltitude = Math.max(maxAltitude, altitude);
             minAltitude = Math.min(minAltitude, altitude);
@@ -204,30 +183,26 @@
             document.getElementById('verticalDrop').textContent = `${verticalDrop.toFixed(0)} m`;
         }
 
-        // New function to calculate average speed
         function calculateAverageSpeed() {
             if (speedReadings.length === 0) return 0;
             return speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length;
         }
 
-        // New function to get weather data
-        async function getWeather() {
-            if (lastPosition) {
-                try {
-                    const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lastPosition.coords.latitude}&lon=${lastPosition.coords.longitude}&appid=YOUR_API_KEY&units=metric`);
-                    const data = await response.json();
-                    document.getElementById('weather').innerHTML = `
-                        Temperature: ${data.main.temp}°C<br>
-                        Conditions: ${data.weather[0].main}<br>
-                        Wind: ${data.wind.speed} m/s
-                    `;
-                } catch (err) {
-                    console.log('Weather fetch error:', err);
-                }
-            }
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                    Math.cos(φ1) * Math.cos(φ2) *
+                    Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+            return R * c;
         }
 
-        // New function to save session data
         function saveSession() {
             const sessionData = {
                 date: new Date().toISOString(),
@@ -240,10 +215,9 @@
             const sessions = JSON.parse(localStorage.getItem('skiSessions') || '[]');
             sessions.push(sessionData);
             localStorage.setItem('skiSessions', JSON.stringify(sessions));
-            alert('Session saved successfully!');
+            alert('Session saved!');
         }
 
-        // New pause function
         function pauseTracking() {
             tracking = !tracking;
             if (tracking) {
@@ -252,9 +226,16 @@
             }
         }
 
-        // Enhanced reset function
-        function resetStats() {
+        function stopTracking() {
             tracking = false;
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+        }
+
+        function resetStats() {
+            stopTracking();
             maxSpeed = 0;
             totalDistance = 0;
             lastPosition = null;
@@ -272,7 +253,22 @@
             document.getElementById('duration').textContent = '00:00:00';
         }
 
-        // Rest of your existing functions...
+        function updateTimer() {
+            if (tracking) {
+                const now = new Date();
+                const diff = now - startTime;
+                const hours = Math.floor(diff / 3600000);
+                const minutes = Math.floor((diff % 3600000) / 60000);
+                const seconds = Math.floor((diff % 60000) / 1000);
+                document.getElementById('duration').textContent = 
+                    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                setTimeout(updateTimer, 1000);
+            }
+        }
+
+        function handleError(error) {
+            console.warn(`ERROR(${error.code}): ${error.message}`);
+        }
     </script>
 </body>
 </html>
