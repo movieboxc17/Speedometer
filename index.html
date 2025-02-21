@@ -1,102 +1,169 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Ski Speedometer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             text-align: center;
             padding: 20px;
-            background: #f0f8ff;
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            color: white;
+            margin: 0;
         }
         #speed {
-            font-size: 72px;
-            font-weight: bold;
-            color: #2c3e50;
+            font-size: 60px;
+            margin: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
         }
-        #unit {
-            font-size: 24px;
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 20px auto;
+            max-width: 400px;
         }
-        #maxSpeed {
-            margin-top: 20px;
-            font-size: 24px;
-            color: #e74c3c;
+        .stat-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            backdrop-filter: blur(5px);
         }
-        .button {
-            margin: 10px;
-            padding: 10px 20px;
-            background: #3498db;
+        button {
+            background: #4CAF50;
             color: white;
             border: none;
-            border-radius: 5px;
-            font-size: 18px;
+            padding: 15px 30px;
+            border-radius: 25px;
+            margin: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: transform 0.2s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        button:active {
+            transform: scale(0.95);
         }
     </style>
 </head>
 <body>
     <h1>Ski Speedometer</h1>
-    <div id="speed">0</div>
-    <div id="unit">km/h</div>
-    <div id="maxSpeed">Max Speed: 0 km/h</div>
-    <button class="button" onclick="startTracking()">Start</button>
-    <button class="button" onclick="stopTracking()">Stop</button>
-    <button class="button" onclick="resetMaxSpeed()">Reset</button>
+    <div id="speed">0 km/h</div>
+    <div class="stats">
+        <div class="stat-box">
+            <h3>Max Speed</h3>
+            <div id="maxSpeed">0 km/h</div>
+        </div>
+        <div class="stat-box">
+            <h3>Distance</h3>
+            <div id="distance">0 km</div>
+        </div>
+        <div class="stat-box">
+            <h3>Altitude</h3>
+            <div id="altitude">0 m</div>
+        </div>
+        <div class="stat-box">
+            <h3>Duration</h3>
+            <div id="duration">00:00:00</div>
+        </div>
+    </div>
+    <button onclick="startTracking()">Start Tracking</button>
+    <button onclick="stopTracking()">Stop Tracking</button>
+    <button onclick="resetStats()">Reset</button>
 
     <script>
-        let watchId = null;
+        let tracking = false;
+        let startTime;
         let maxSpeed = 0;
-
-        // Load saved max speed from localStorage
-        window.onload = function() {
-            const savedMaxSpeed = localStorage.getItem('maxSkiSpeed');
-            if (savedMaxSpeed) {
-                maxSpeed = parseFloat(savedMaxSpeed);
-                document.getElementById('maxSpeed').textContent = `Max Speed: ${maxSpeed.toFixed(1)} km/h`;
-            }
-        };
+        let totalDistance = 0;
+        let lastPosition = null;
 
         function startTracking() {
-            if (navigator.geolocation) {
-                watchId = navigator.geolocation.watchPosition(
-                    function(position) {
-                        if (position.coords.speed != null) {
-                            // Convert m/s to km/h
-                            const speedKmh = position.coords.speed * 3.6;
-                            document.getElementById('speed').textContent = speedKmh.toFixed(1);
-                            
-                            // Update max speed
-                            if (speedKmh > maxSpeed) {
-                                maxSpeed = speedKmh;
-                                document.getElementById('maxSpeed').textContent = `Max Speed: ${maxSpeed.toFixed(1)} km/h`;
-                                localStorage.setItem('maxSkiSpeed', maxSpeed.toString());
-                            }
-                        }
-                    },
-                    function(error) {
-                        alert('Please enable location services to use the speedometer');
-                    },
-                    {
+            if (!tracking) {
+                tracking = true;
+                startTime = new Date();
+                updateTimer();
+                
+                if (navigator.geolocation) {
+                    navigator.geolocation.watchPosition(updatePosition, handleError, {
                         enableHighAccuracy: true,
                         maximumAge: 0,
                         timeout: 5000
-                    }
+                    });
+                }
+            }
+        }
+
+        function updatePosition(position) {
+            const speed = position.coords.speed ? position.coords.speed * 3.6 : 0;
+            document.getElementById('speed').textContent = `${speed.toFixed(1)} km/h`;
+            document.getElementById('altitude').textContent = `${position.coords.altitude.toFixed(0)} m`;
+
+            if (speed > maxSpeed) {
+                maxSpeed = speed;
+                document.getElementById('maxSpeed').textContent = `${maxSpeed.toFixed(1)} km/h`;
+            }
+
+            if (lastPosition) {
+                const distance = calculateDistance(
+                    lastPosition.coords.latitude,
+                    lastPosition.coords.longitude,
+                    position.coords.latitude,
+                    position.coords.longitude
                 );
+                totalDistance += distance;
+                document.getElementById('distance').textContent = `${(totalDistance/1000).toFixed(2)} km`;
+            }
+
+            lastPosition = position;
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                    Math.cos(φ1) * Math.cos(φ2) *
+                    Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+            return R * c;
+        }
+
+        function updateTimer() {
+            if (tracking) {
+                const now = new Date();
+                const diff = now - startTime;
+                const hours = Math.floor(diff / 3600000);
+                const minutes = Math.floor((diff % 3600000) / 60000);
+                const seconds = Math.floor((diff % 60000) / 1000);
+                document.getElementById('duration').textContent = 
+                    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                setTimeout(updateTimer, 1000);
             }
         }
 
         function stopTracking() {
-            if (watchId != null) {
-                navigator.geolocation.clearWatch(watchId);
-                watchId = null;
-            }
+            tracking = false;
         }
 
-        function resetMaxSpeed() {
+        function resetStats() {
             maxSpeed = 0;
-            localStorage.removeItem('maxSkiSpeed');
-            document.getElementById('maxSpeed').textContent = 'Max Speed: 0 km/h';
+            totalDistance = 0;
+            lastPosition = null;
+            document.getElementById('speed').textContent = '0 km/h';
+            document.getElementById('maxSpeed').textContent = '0 km/h';
+            document.getElementById('distance').textContent = '0 km';
+            document.getElementById('altitude').textContent = '0 m';
+            document.getElementById('duration').textContent = '00:00:00';
+        }
+
+        function handleError(error) {
+            console.warn(`ERROR(${error.code}): ${error.message}`);
         }
     </script>
 </body>
