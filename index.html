@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Advanced Ski Speedometer Pro</title>
+    <title>Pro Ski Speedometer</title>
     <style>
         body {
             font-family: 'Segoe UI', Arial, sans-serif;
@@ -12,12 +12,15 @@
             color: white;
             margin: 0;
             min-height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
         }
         #speed {
-            font-size: 72px;
+            font-size: 82px;
             margin: 20px;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
             font-weight: bold;
+            font-family: 'Digital-7', monospace;
         }
         .stats {
             display: grid;
@@ -33,9 +36,15 @@
             border-radius: 12px;
             backdrop-filter: blur(10px);
             transition: transform 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         .stat-box:hover {
             transform: scale(1.05);
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .stat-box h3 {
+            margin: 0 0 10px 0;
+            color: #a8d5ff;
         }
         button {
             background: linear-gradient(45deg, #4CAF50, #45a049);
@@ -48,34 +57,56 @@
             font-size: 16px;
             transition: all 0.3s;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            min-width: 150px;
         }
         button:hover {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(0,0,0,0.3);
         }
-        #map {
-            height: 200px;
-            margin: 20px auto;
-            border-radius: 12px;
-            max-width: 600px;
+        button:active {
+            transform: translateY(1px);
         }
+        .gps-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            background: rgba(0,0,0,0.3);
+        }
+        .accuracy-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-left: 5px;
+        }
+        .accuracy-high { background: #4CAF50; }
+        .accuracy-medium { background: #FFC107; }
+        .accuracy-low { background: #F44336; }
     </style>
 </head>
 <body>
-    <h1>Advanced Ski Speedometer Pro</h1>
-    <div id="speed">0 km/h</div>
+    <div class="gps-status">
+        GPS Signal: <span id="gps-accuracy">Waiting...</span>
+        <span class="accuracy-indicator" id="accuracy-indicator"></span>
+    </div>
+    
+    <h1>Pro Ski Speedometer</h1>
+    <div id="speed">0.0 km/h</div>
     <div class="stats">
         <div class="stat-box">
             <h3>Max Speed</h3>
-            <div id="maxSpeed">0 km/h</div>
+            <div id="maxSpeed">0.0 km/h</div>
         </div>
         <div class="stat-box">
             <h3>Average Speed</h3>
-            <div id="avgSpeed">0 km/h</div>
+            <div id="avgSpeed">0.0 km/h</div>
         </div>
         <div class="stat-box">
             <h3>Distance</h3>
-            <div id="distance">0 km</div>
+            <div id="distance">0.00 km</div>
         </div>
         <div class="stat-box">
             <h3>Altitude</h3>
@@ -90,11 +121,12 @@
             <div id="duration">00:00:00</div>
         </div>
     </div>
-    <button onclick="startTracking()">Start Tracking</button>
-    <button onclick="pauseTracking()">Pause</button>
-    <button onclick="stopTracking()">Stop</button>
-    <button onclick="resetStats()">Reset</button>
-    <button onclick="saveSession()">Save Session</button>
+
+    <button onclick="startTracking()" id="startBtn">Start Tracking</button>
+    <button onclick="pauseTracking()" id="pauseBtn">Pause</button>
+    <button onclick="stopTracking()" id="stopBtn">Stop</button>
+    <button onclick="resetStats()" id="resetBtn">Reset</button>
+    <button onclick="saveSession()" id="saveBtn">Save Session</button>
 
     <script>
         let tracking = false;
@@ -108,6 +140,19 @@
         let maxAltitude = 0;
         let minAltitude = Infinity;
         let watchId = null;
+        let kalmanFilter = initializeKalmanFilter();
+
+        function initializeKalmanFilter() {
+            return {
+                R: 0.01,
+                Q: 0.1,
+                A: 1,
+                B: 0,
+                C: 1,
+                P: 1,
+                x: 0
+            };
+        }
 
         function startTracking() {
             if (!tracking) {
@@ -115,77 +160,70 @@
                 startTime = new Date();
                 updateTimer();
                 
+                const gpsOptions = {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                };
+
                 if (navigator.geolocation) {
-                    watchId = navigator.geolocation.watchPosition(updatePosition, handleError, {
-                        enableHighAccuracy: true,
-                        maximumAge: 0,
-                        timeout: 5000
-                    });
+                    watchId = navigator.geolocation.watchPosition(
+                        handlePosition,
+                        handleError,
+                        gpsOptions
+                    );
+                    keepScreenAwake();
+                    document.getElementById('startBtn').disabled = true;
                 }
-                keepScreenAwake();
             }
         }
 
-        function keepScreenAwake() {
-            if (navigator.wakeLock) {
-                navigator.wakeLock.request('screen')
-                    .catch(err => console.log('Wake Lock error:', err));
-            }
-        }
-
-        function updatePosition(position) {
-            const speed = position.coords.speed ? position.coords.speed * 3.6 : 0;
-            const smoothedSpeed = smoothSpeed(speed);
+        function handlePosition(position) {
+            updateGPSStatus(position.coords.accuracy);
             
-            document.getElementById('speed').textContent = `${smoothedSpeed.toFixed(1)} km/h`;
-            document.getElementById('altitude').textContent = `${position.coords.altitude.toFixed(0)} m`;
-
-            trackPoints.push({
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
-                alt: position.coords.altitude
-            });
-
-            updateAltitudeStats(position.coords.altitude);
-
-            if (smoothedSpeed > maxSpeed) {
-                maxSpeed = smoothedSpeed;
-                document.getElementById('maxSpeed').textContent = `${maxSpeed.toFixed(1)} km/h`;
-            }
-
-            if (lastPosition) {
-                const distance = calculateDistance(
-                    lastPosition.coords.latitude,
-                    lastPosition.coords.longitude,
-                    position.coords.latitude,
-                    position.coords.longitude
-                );
-                totalDistance += distance;
-                document.getElementById('distance').textContent = `${(totalDistance/1000).toFixed(2)} km`;
+            if (position.coords.accuracy <= 20) { // Only process accurate readings
+                const speed = calculateSpeed(position);
+                const smoothedSpeed = applyKalmanFilter(speed, kalmanFilter);
                 
-                const avgSpeed = calculateAverageSpeed();
-                document.getElementById('avgSpeed').textContent = `${avgSpeed.toFixed(1)} km/h`;
+                updateSpeedDisplay(smoothedSpeed);
+                updateAltitude(position.coords.altitude);
+                updateDistance(position);
+                
+                trackPoints.push({
+                    lat: position.coords.latitude,
+                    lng: position.coords.longitude,
+                    alt: position.coords.altitude,
+                    speed: smoothedSpeed,
+                    timestamp: new Date().getTime()
+                });
+                
+                lastPosition = position;
             }
-
-            lastPosition = position;
         }
 
-        function smoothSpeed(currentSpeed) {
-            speedReadings.push(currentSpeed);
-            if (speedReadings.length > 5) speedReadings.shift();
-            return speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length;
+        function calculateSpeed(position) {
+            if (!lastPosition) return 0;
+
+            const distance = calculateDistance(
+                lastPosition.coords.latitude,
+                lastPosition.coords.longitude,
+                position.coords.latitude,
+                position.coords.longitude
+            );
+
+            const timeDiff = (position.timestamp - lastPosition.timestamp) / 1000;
+            return (distance / timeDiff) * 3.6; // Convert to km/h
         }
 
-        function updateAltitudeStats(altitude) {
-            maxAltitude = Math.max(maxAltitude, altitude);
-            minAltitude = Math.min(minAltitude, altitude);
-            const verticalDrop = maxAltitude - minAltitude;
-            document.getElementById('verticalDrop').textContent = `${verticalDrop.toFixed(0)} m`;
-        }
+        function applyKalmanFilter(measurement, filter) {
+            const prediction = filter.A * filter.x + filter.B;
+            filter.P = filter.A * filter.P * filter.A + filter.Q;
 
-        function calculateAverageSpeed() {
-            if (speedReadings.length === 0) return 0;
-            return speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length;
+            const K = filter.P * filter.C / (filter.C * filter.P * filter.C + filter.R);
+            filter.x = prediction + K * (measurement - filter.C * prediction);
+            filter.P = (1 - K * filter.C) * filter.P;
+
+            return filter.x;
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -203,19 +241,65 @@
             return R * c;
         }
 
-        function saveSession() {
-            const sessionData = {
-                date: new Date().toISOString(),
-                maxSpeed,
-                totalDistance,
-                duration: document.getElementById('duration').textContent,
-                trackPoints
-            };
+        function updateSpeedDisplay(speed) {
+            document.getElementById('speed').textContent = `${speed.toFixed(1)} km/h`;
             
-            const sessions = JSON.parse(localStorage.getItem('skiSessions') || '[]');
-            sessions.push(sessionData);
-            localStorage.setItem('skiSessions', JSON.stringify(sessions));
-            alert('Session saved!');
+            if (speed > maxSpeed) {
+                maxSpeed = speed;
+                document.getElementById('maxSpeed').textContent = `${maxSpeed.toFixed(1)} km/h`;
+            }
+
+            speedReadings.push(speed);
+            if (speedReadings.length > 10) speedReadings.shift();
+            
+            const avgSpeed = speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length;
+            document.getElementById('avgSpeed').textContent = `${avgSpeed.toFixed(1)} km/h`;
+        }
+
+        function updateAltitude(altitude) {
+            document.getElementById('altitude').textContent = `${altitude.toFixed(0)} m`;
+            
+            maxAltitude = Math.max(maxAltitude, altitude);
+            minAltitude = Math.min(minAltitude, altitude);
+            
+            const verticalDrop = maxAltitude - minAltitude;
+            document.getElementById('verticalDrop').textContent = `${verticalDrop.toFixed(0)} m`;
+        }
+
+        function updateDistance(position) {
+            if (lastPosition && tracking) {
+                const distance = calculateDistance(
+                    lastPosition.coords.latitude,
+                    lastPosition.coords.longitude,
+                    position.coords.latitude,
+                    position.coords.longitude
+                );
+                totalDistance += distance;
+                document.getElementById('distance').textContent = `${(totalDistance/1000).toFixed(2)} km`;
+            }
+        }
+
+        function updateGPSStatus(accuracy) {
+            const indicator = document.getElementById('accuracy-indicator');
+            const status = document.getElementById('gps-accuracy');
+            
+            if (accuracy <= 5) {
+                indicator.className = 'accuracy-indicator accuracy-high';
+                status.textContent = 'High';
+            } else if (accuracy <= 15) {
+                indicator.className = 'accuracy-indicator accuracy-medium';
+                status.textContent = 'Medium';
+            } else {
+                indicator.className = 'accuracy-indicator accuracy-low';
+                status.textContent = 'Low';
+            }
+        }
+
+        function keepScreenAwake() {
+            if (navigator.wakeLock) {
+                navigator.wakeLock.request('screen')
+                    .catch(err => console.log('Wake Lock error:', err));
+            }
         }
 
         function pauseTracking() {
@@ -232,6 +316,7 @@
                 navigator.geolocation.clearWatch(watchId);
                 watchId = null;
             }
+            document.getElementById('startBtn').disabled = false;
         }
 
         function resetStats() {
@@ -243,14 +328,13 @@
             trackPoints = [];
             maxAltitude = 0;
             minAltitude = Infinity;
+            kalmanFilter = initializeKalmanFilter();
             
-            document.getElementById('speed').textContent = '0 km/h';
-            document.getElementById('maxSpeed').textContent = '0 km/h';
-            document.getElementById('avgSpeed').textContent = '0 km/h';
-            document.getElementById('distance').textContent = '0 km';
-            document.getElementById('altitude').textContent = '0 m';
-            document.getElementById('verticalDrop').textContent = '0 m';
-            document.getElementById('duration').textContent = '00:00:00';
+            ['speed', 'maxSpeed', 'avgSpeed', 'distance', 'altitude', 'verticalDrop', 'duration'].forEach(id => {
+                document.getElementById(id).textContent = id.includes('Speed') ? '0.0 km/h' : 
+                                                        id === 'distance' ? '0.00 km' :
+                                                        id === 'duration' ? '00:00:00' : '0 m';
+            });
         }
 
         function updateTimer() {
@@ -266,8 +350,24 @@
             }
         }
 
+        function saveSession() {
+            const sessionData = {
+                date: new Date().toISOString(),
+                maxSpeed,
+                totalDistance,
+                duration: document.getElementById('duration').textContent,
+                trackPoints
+            };
+            
+            const sessions = JSON.parse(localStorage.getItem('skiSessions') || '[]');
+            sessions.push(sessionData);
+            localStorage.setItem('skiSessions', JSON.stringify(sessions));
+            alert('Session saved successfully!');
+        }
+
         function handleError(error) {
-            console.warn(`ERROR(${error.code}): ${error.message}`);
+            console.warn(`GPS Error (${error.code}): ${error.message}`);
+            updateGPSStatus(100); // Show low accuracy
         }
     </script>
 </body>
